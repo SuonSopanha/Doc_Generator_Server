@@ -2,13 +2,16 @@ const express = require("express");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const multer = require("multer");
-const mammoth = require("mammoth"); // Optional if you still want to extract text from DOCX
 const fs = require("fs");
 const path = require("path");
 const xlsx = require("xlsx");
 const PizZip = require("pizzip");
 const Docxtemplater = require("docxtemplater");
+const DocxMerger = require("docx-merger");
 const archiver = require("archiver");
+archiver.registerFormat("zip-encrypted", require("archiver-zip-encrypted"));
+const docxToPdf = require("docx-pdf"); // Import docx-pdf
+const libre = require('libreoffice-convert');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -20,19 +23,14 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // Multer configuration for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, "uploads/"); // Files will be stored in an "uploads" folder
+    cb(null, "uploads/");
   },
   filename: (req, file, cb) => {
-    cb(null, `${Date.now()}-${file.originalname}`); // Create a unique file name
+    cb(null, `${Date.now()}-${file.originalname}`);
   },
 });
 
 const upload = multer({ storage: storage });
-
-// Basic route
-app.get("/", (req, res) => {
-  res.send("Hello, World!");
-});
 
 // Helper function to read and parse Excel data
 const readExcelData = (filePath) => {
@@ -42,7 +40,226 @@ const readExcelData = (filePath) => {
   return data;
 };
 
-// Route to handle multiple files and document merge
+// Helper function to generate individual documents
+const generateDocuments = async (docxFilePath, excelData) => {
+  const headers = excelData[0];
+  const generatedFiles = [];
+
+  for (let i = 1; i < excelData.length; i++) {
+    const rowData = excelData[i];
+    const data = {};
+
+    headers.forEach((header, index) => {
+      data[header.trim()] = rowData[index] || "";
+    });
+
+    const content = fs.readFileSync(docxFilePath, "binary");
+    const zip = new PizZip(content);
+    const doc = new Docxtemplater(zip, {
+      paragraphLoop: true,
+      lineBreaks: true,
+    });
+
+    doc.setData(data);
+    doc.render();
+
+    const buf = doc.getZip().generate({ type: "nodebuffer" });
+    const outputFilePath = path.join(
+      __dirname,
+      `uploads/output-${Date.now()}-${i}.docx`
+    );
+    fs.writeFileSync(outputFilePath, buf);
+    generatedFiles.push(outputFilePath);
+  }
+
+  return generatedFiles;
+};
+
+const convertDocxToPdf = (docxFilePath) => {
+  return new Promise((resolve, reject) => {
+    const pdfFilePath = docxFilePath.replace(/\.docx$/, '.pdf');
+    const fileBuffer = fs.readFileSync(docxFilePath);
+
+    libre.convert(fileBuffer, '.pdf', undefined, (err, done) => {
+      if (err) {
+        console.error('Error converting DOCX to PDF:', err);
+        reject(err);
+        return;
+      }
+      fs.writeFileSync(pdfFilePath, done);
+      resolve(pdfFilePath);
+    });
+  });
+};
+
+// Helper function to handle single file output
+// Helper function to handle single file output
+const handleSingleFileOutput = async (generatedFiles, res, outputExtension, encryptedPassword) => {
+  try {
+    // Read file buffers from generated files
+    const fileBuffers = generatedFiles.map((filePath) => fs.readFileSync(filePath));
+
+    // Merge DOCX files
+    const merger = new DocxMerger({ removeTrailingLineBreaks: true }, fileBuffers);
+    const finalDocxPath = path.join(__dirname, `uploads/combined-output-${Date.now()}.docx`);
+
+    merger.save("nodebuffer", async function (mergedBuffer) {
+      fs.writeFileSync(finalDocxPath, mergedBuffer);
+
+      let finalOutputPath = finalDocxPath;
+
+      // Convert to PDF if required
+      if (outputExtension === "pdf") {
+        try {
+          finalOutputPath = await convertDocxToPdf(finalDocxPath);
+          fs.unlinkSync(finalDocxPath); // Remove intermediate DOCX file
+        } catch (error) {
+          console.error("Error during DOCX to PDF conversion:", error);
+          res.status(500).send("Error converting to PDF.");
+          return;
+        }
+      }
+
+      // Prepare the ZIP archive
+      const zipFilePath = path.join(
+        __dirname,
+        `uploads/output-archive-${Date.now()}.zip`
+      );
+
+      const output = fs.createWriteStream(zipFilePath);
+      const archive = encryptedPassword
+        ? archiver("zip-encrypted", {
+            zlib: { level: 9 },
+            encryptionMethod: "aes256",
+            password: encryptedPassword,
+          })
+        : archiver("zip", { zlib: { level: 9 } });
+
+      output.on("close", () => {
+        console.log(`ZIP file created (${archive.pointer()} total bytes)`);
+
+        // Send ZIP file to the client
+        res.download(zipFilePath, path.basename(zipFilePath), (err) => {
+          if (err) {
+            console.error("Error sending ZIP file:", err);
+            res.status(500).send("Error sending ZIP file.");
+          }
+
+          // Cleanup temporary files
+          try {
+            fs.unlinkSync(zipFilePath);
+            fs.unlinkSync(finalOutputPath);
+          } catch (error) {
+            console.error("Error deleting ZIP or final output file:", error);
+          }
+
+          generatedFiles.forEach((file) => {
+            try {
+              fs.unlinkSync(file);
+            } catch (error) {
+              console.error(`Error deleting file ${file}:`, error);
+            }
+          });
+        });
+      });
+
+      archive.on("error", (err) => {
+        console.error("Error creating ZIP archive:", err);
+        res.status(500).send("Error creating ZIP archive.");
+      });
+
+      // Pipe archive data to the output file
+      archive.pipe(output);
+
+      // Append the final output file to the archive
+      archive.append(fs.createReadStream(finalOutputPath), {
+        name: path.basename(finalOutputPath),
+      });
+
+      // Finalize the archive
+      archive.finalize();
+    });
+  } catch (error) {
+    console.error("Error combining files or creating ZIP:", error);
+
+    // Cleanup temporary files
+    generatedFiles.forEach((file) => {
+      try {
+        fs.unlinkSync(file);
+      } catch (error) {
+        console.error(`Error deleting file ${file}:`, error);
+      }
+    });
+
+    res.status(500).send("Error combining files or creating ZIP.");
+  }
+};
+
+// Helper function to handle multiple file output (ZIP)
+const handleMultipleFileOutput = async (
+  generatedFiles,
+  res,
+  outputExtension,
+  encryptedPassword
+) => {
+  const zipFilePath = path.join(
+    __dirname,
+    `uploads/documents-${Date.now()}.zip`
+  );
+  const output = fs.createWriteStream(zipFilePath);
+  const archive = archiver("zip", {
+    zlib: { level: 9 },
+  });
+
+  output.on("close", () => {
+    res.download(zipFilePath, "documents.zip", (err) => {
+      if (err) {
+        console.error("Error sending ZIP file:", err);
+        res.status(500).send("Error sending ZIP file.");
+      }
+
+      // Clean up all files after sending
+      generatedFiles.forEach((file) => {
+        try {
+          fs.unlinkSync(file);
+        } catch (error) {
+          console.error(`Error deleting file ${file}:`, error);
+        }
+      });
+
+      try {
+        fs.unlinkSync(zipFilePath);
+      } catch (error) {
+        console.error("Error deleting ZIP file:", error);
+      }
+    });
+  });
+
+  archive.on("error", (err) => {
+    console.error("Error creating ZIP:", err);
+    res.status(500).send("Error creating ZIP file.");
+
+    // Clean up generated files on error
+    generatedFiles.forEach((file) => {
+      try {
+        fs.unlinkSync(file);
+      } catch (error) {
+        console.error(`Error deleting file ${file}:`, error);
+      }
+    });
+  });
+
+  archive.pipe(output);
+
+  // Add each file to the archive with a proper name
+  generatedFiles.forEach((file, index) => {
+    archive.file(file, { name: `document-${index + 1}.docx` });
+  });
+
+  await archive.finalize();
+};
+
+// Main route to handle document processing
 app.post(
   "/upload",
   upload.fields([
@@ -56,101 +273,52 @@ app.post(
 
     const docFile = req.files["docFile"][0];
     const excelFile = req.files["excelFile"][0];
-
     const docxFilePath = path.join(__dirname, docFile.path);
 
-    // Read the DOCX file using PizZip and Docxtemplater
-    let zip, doc;
     try {
-      const content = fs.readFileSync(docxFilePath, "binary");
-      zip = new PizZip(content);
-      doc = new Docxtemplater(zip, { paragraphLoop: true, lineBreaks: true });
-    } catch (err) {
-      console.error("Error reading DOCX file:", err);
-      return res.status(500).send("Error reading DOCX file.");
-    }
+      // Read Excel data
+      const excelData = readExcelData(path.join(__dirname, excelFile.path));
 
-    // Read Excel data
-    const excelData = readExcelData(path.join(__dirname, excelFile.path));
-    const headers = excelData[0]; // e.g., ["name", "title"]
-    const generatedFiles = [];
+      // Generate individual documents
+      const generatedFiles = await generateDocuments(docxFilePath, excelData);
+      const outputExtension = req.body.outputExtension || "docx";
+      const encryptedPassword = req.body.password;
 
-    // Loop through all rows (starting from the second row)
-    // Loop through all rows (starting from the second row)
-    for (let i = 1; i < excelData.length; i++) {
-      const rowData = excelData[i];
-
-      // Create a data object for the current row
-      const data = {};
-      headers.forEach((header, index) => {
-        data[header.trim()] = rowData[index] || ""; // Map headers to values
-      });
-
-      // Create a new Docxtemplater instance for each document
-      const newDoc = new Docxtemplater(
-        new PizZip(fs.readFileSync(docxFilePath, "binary")),
-        { paragraphLoop: true, lineBreaks: true }
-      );
-
-      // Set data in the document
-      newDoc.setData(data);
-
-      // Render the document
-      try {
-        newDoc.render();
-      } catch (error) {
-        console.error("Error during rendering:", error);
-        return res.status(500).send("Error rendering document.");
+      // Handle output based on format
+      if (req.body.outputFormat === "single") {
+        await handleSingleFileOutput(
+          generatedFiles,
+          res,
+          outputExtension,
+          encryptedPassword
+        );
+      } else {
+        await handleMultipleFileOutput(
+          generatedFiles,
+          res,
+          outputExtension,
+          encryptedPassword
+        );
       }
 
-      // Generate the buffer for the new document
-      const buf = newDoc.getZip().generate({ type: "nodebuffer" });
-
-      // Write the buffer to a new DOCX file
-      const outputFilePath = path.join(
-        __dirname,
-        `uploads/output-${Date.now()}-${i}.docx`
-      );
-      fs.writeFileSync(outputFilePath, buf);
-      generatedFiles.push(outputFilePath); // Add to generated files
+      // Clean up uploaded files
+      try {
+        fs.unlinkSync(docxFilePath);
+        fs.unlinkSync(path.join(__dirname, excelFile.path));
+      } catch (error) {
+        console.error("Error cleaning up uploaded files:", error);
+      }
+    } catch (error) {
+      console.error("Error processing documents:", error);
+      res.status(500).send("Error processing documents.");
     }
-
-    // Create a ZIP file to send the generated documents
-    const zipFilePath = path.join(
-      __dirname,
-      `uploads/generated-documents-${Date.now()}.zip`
-    );
-    const zipStream = fs.createWriteStream(zipFilePath);
-    const archive = archiver("zip", {
-      zlib: { level: 9 },
-    });
-
-    zipStream.on("close", () => {
-      console.log(`ZIP file created: ${zipFilePath}`);
-      res.download(zipFilePath, (err) => {
-        if (err) {
-          console.error("Error sending ZIP file:", err);
-          res.status(500).send("Error sending ZIP file.");
-        } else {
-          // Clean up generated files after sending
-          generatedFiles.forEach((file) => fs.unlinkSync(file)); // Delete generated documents
-          fs.unlinkSync(zipFilePath); // Delete the ZIP file
-        }
-      });
-    });
-
-    // Pipe the ZIP stream to the archive
-    archive.pipe(zipStream);
-
-    // Append the generated files to the ZIP archive
-    generatedFiles.forEach((file) => {
-      archive.file(file, { name: path.basename(file) });
-    });
-
-    // Finalize the archive
-    archive.finalize();
   }
 );
+
+// Basic route
+app.get("/", (req, res) => {
+  res.send("Hello, World!");
+});
 
 // Start the server
 app.listen(PORT, () => {
