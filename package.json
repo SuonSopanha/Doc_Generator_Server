@@ -13,6 +13,7 @@
     "archiver-zip-encrypted": "^2.0.0",
     "body-parser": "^1.20.3",
     "cors": "^2.8.5",
+    "csv-parser": "^3.2.0",
     "docx": "^9.0.2",
     "docx-merger": "^1.2.2",
     "docx-pdf": "^0.0.1",

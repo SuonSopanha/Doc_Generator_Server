@@ -12,6 +12,7 @@ const archiver = require("archiver");
 archiver.registerFormat("zip-encrypted", require("archiver-zip-encrypted"));
 const docxToPdf = require("docx-pdf"); // Import docx-pdf
 const libre = require('libreoffice-convert');
+const { Column } = require("docx");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -39,6 +40,31 @@ const readExcelData = (filePath) => {
   const data = xlsx.utils.sheet_to_json(sheet, { header: 1 });
   return data;
 };
+
+const readCsvData = (filePath) => {
+  const fileContent = fs.readFileSync(filePath, 'utf8');
+  const rows = fileContent.trim().split('\n').map(row => row.split(','));
+  return rows;
+};
+
+const readJsonData = (filePath) => {
+  const fileContent = fs.readFileSync(filePath, 'utf8');
+  return JSON.parse(fileContent);
+};
+
+const filterData = (data, startRow, endRow, option) => {
+  return data.slice(startRow, endRow + 1).filter((_, index) => {
+    if (option === 'odd') return (startRow + index) % 2 !== 0;
+    if (option === 'even') return (startRow + index) % 2 === 0;
+    return true; // Return all if no valid option is given
+  });
+};
+
+const conditionalData = (data,column,operator,value) => {
+  
+}
+
+
 
 // Helper function to generate individual documents
 const generateDocuments = async (docxFilePath, excelData) => {
@@ -324,3 +350,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
+
+
