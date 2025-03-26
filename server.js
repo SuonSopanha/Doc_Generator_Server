@@ -11,7 +11,7 @@ const DocxMerger = require("docx-merger");
 const archiver = require("archiver");
 archiver.registerFormat("zip-encrypted", require("archiver-zip-encrypted"));
 const docxToPdf = require("docx-pdf"); // Import docx-pdf
-const libre = require('libreoffice-convert');
+const libre = require("libreoffice-convert");
 const { Column } = require("docx");
 
 const app = express();
@@ -42,36 +42,55 @@ const readExcelData = (filePath) => {
 };
 
 const readCsvData = (filePath) => {
-  const fileContent = fs.readFileSync(filePath, 'utf8');
-  const rows = fileContent.trim().split('\n').map(row => row.split(','));
+  const fileContent = fs.readFileSync(filePath, "utf8");
+  const rows = fileContent
+    .trim()
+    .split("\n")
+    .map((row) => row.split(","));
   return rows;
 };
 
 const readJsonData = (filePath) => {
-  const fileContent = fs.readFileSync(filePath, 'utf8');
+  const fileContent = fs.readFileSync(filePath, "utf8");
   return JSON.parse(fileContent);
 };
 
 const filterData = (data, startRow, endRow, option) => {
   return data.slice(startRow, endRow + 1).filter((_, index) => {
-    if (option === 'odd') return (startRow + index) % 2 !== 0;
-    if (option === 'even') return (startRow + index) % 2 === 0;
+    if (option === "odd") return (startRow + index) % 2 !== 0;
+    if (option === "even") return (startRow + index) % 2 === 0;
     return true; // Return all if no valid option is given
   });
 };
 
-const conditionalData = (data,column,operator,value) => {
-  
-}
-
-
+const conditionalData = (data, column, operator, value) => {};
 
 // Helper function to generate individual documents
-const generateDocuments = async (docxFilePath, excelData) => {
+const generateDocuments = async (
+  docxFilePath,
+  excelData,
+  filterType,
+  range = {}
+) => {
   const headers = excelData[0];
   const generatedFiles = [];
+  let startRow = 1;
+  let endRow = excelData.length;
+  let increment = 1;
 
-  for (let i = 1; i < excelData.length; i++) {
+  if(filterType === 'odd') {
+    startRow = 1
+    increment = 2;
+  } else if(filterType === 'even') {
+    startRow = 2
+    increment = 2;
+  } else if(filterType === 'custom') {
+    startRow = parseInt(range.from)
+    endRow = parseInt(range.to) + 1
+    increment = 1;
+  } 
+
+  for (let i = startRow ; i < endRow; i += increment) {
     const rowData = excelData[i];
     const data = {};
 
@@ -103,12 +122,12 @@ const generateDocuments = async (docxFilePath, excelData) => {
 
 const convertDocxToPdf = (docxFilePath) => {
   return new Promise((resolve, reject) => {
-    const pdfFilePath = docxFilePath.replace(/\.docx$/, '.pdf');
+    const pdfFilePath = docxFilePath.replace(/\.docx$/, ".pdf");
     const fileBuffer = fs.readFileSync(docxFilePath);
 
-    libre.convert(fileBuffer, '.pdf', undefined, (err, done) => {
+    libre.convert(fileBuffer, ".pdf", undefined, (err, done) => {
       if (err) {
-        console.error('Error converting DOCX to PDF:', err);
+        console.error("Error converting DOCX to PDF:", err);
         reject(err);
         return;
       }
@@ -120,14 +139,27 @@ const convertDocxToPdf = (docxFilePath) => {
 
 // Helper function to handle single file output
 // Helper function to handle single file output
-const handleSingleFileOutput = async (generatedFiles, res, outputExtension, encryptedPassword) => {
+const handleSingleFileOutput = async (
+  generatedFiles,
+  res,
+  outputExtension,
+  encryptedPassword
+) => {
   try {
     // Read file buffers from generated files
-    const fileBuffers = generatedFiles.map((filePath) => fs.readFileSync(filePath));
+    const fileBuffers = generatedFiles.map((filePath) =>
+      fs.readFileSync(filePath)
+    );
 
     // Merge DOCX files
-    const merger = new DocxMerger({ removeTrailingLineBreaks: true }, fileBuffers);
-    const finalDocxPath = path.join(__dirname, `uploads/combined-output-${Date.now()}.docx`);
+    const merger = new DocxMerger(
+      { removeTrailingLineBreaks: true },
+      fileBuffers
+    );
+    const finalDocxPath = path.join(
+      __dirname,
+      `uploads/combined-output-${Date.now()}.docx`
+    );
 
     merger.save("nodebuffer", async function (mergedBuffer) {
       fs.writeFileSync(finalDocxPath, mergedBuffer);
@@ -306,7 +338,12 @@ app.post(
       const excelData = readExcelData(path.join(__dirname, excelFile.path));
 
       // Generate individual documents
-      const generatedFiles = await generateDocuments(docxFilePath, excelData);
+      const generatedFiles = await generateDocuments(
+        docxFilePath,
+        excelData,
+        req.body.filterType,
+        { from: req.body.customFrom, to: req.body.customTo }
+      );
       const outputExtension = req.body.outputExtension || "docx";
       const encryptedPassword = req.body.password;
 
@@ -350,5 +387,3 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
 });
-
-
