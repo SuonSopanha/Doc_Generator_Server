@@ -63,39 +63,89 @@ const filterData = (data, startRow, endRow, option) => {
   });
 };
 
-const conditionalData = (data, column, operator, value) => {};
+const conditionalData = (data, column, operator, value) => {
+  if (!column || !operator || value === undefined) return data;
+  
+  const headers = data[0];
+  const columnIndex = headers.indexOf(column);
+  
+  if (columnIndex === -1) return data;
+  
+  return data.filter((row, index) => {
+    if (index === 0) return true; // Keep headers
+    const cellValue = row[columnIndex];
+    
+    switch (operator) {
+      case '=':
+      case '==':
+        return cellValue == value;
+      case '!=':
+      case '<>':
+        return cellValue != value;
+      case '>':
+        return cellValue > value;
+      case '<':
+        return cellValue < value;
+      case '>=':
+        return cellValue >= value;
+      case '<=':
+        return cellValue <= value;
+      case 'contains':
+        return String(cellValue).includes(String(value));
+      case 'startsWith':
+        return String(cellValue).startsWith(String(value));
+      case 'endsWith':
+        return String(cellValue).endsWith(String(value));
+      default:
+        return true;
+    }
+  });
+};
 
 // Helper function to generate individual documents
 const generateDocuments = async (
   docxFilePath,
   excelData,
   filterType,
-  range = {}
+  range = {},
+  mergingCondition = null
 ) => {
   const headers = excelData[0];
   const generatedFiles = [];
+
+  // First apply the merging condition if it exists
+  let filteredData = mergingCondition 
+    ? conditionalData(excelData, mergingCondition.column, mergingCondition.operator, mergingCondition.value)
+    : excelData;
+
   let startRow = 1;
-  let endRow = excelData.length;
+  let endRow = filteredData.length;
   let increment = 1;
 
   if(filterType === 'odd') {
-    startRow = 1
+    startRow = 1;
     increment = 2;
   } else if(filterType === 'even') {
-    startRow = 2
+    startRow = 2;
     increment = 2;
   } else if(filterType === 'custom') {
-    startRow = parseInt(range.from)
-    endRow = parseInt(range.to) + 1
+    startRow = Math.max(1, parseInt(range.from) || 1);
+    endRow = Math.min(filteredData.length, (parseInt(range.to) + 1) || filteredData.length);
     increment = 1;
-  } 
+  }
 
-  for (let i = startRow ; i < endRow; i += increment) {
-    const rowData = excelData[i];
+  for (let i = startRow; i < endRow; i += increment) {
+    const rowData = filteredData[i];
+    
+    // Skip if row is undefined
+    if (!rowData) continue;
+    
     const data = {};
 
     headers.forEach((header, index) => {
-      data[header.trim()] = rowData[index] || "";
+      // Ensure header is trimmed and handle undefined values
+      const headerKey = header.trim();
+      data[headerKey] = rowData[index] !== undefined ? rowData[index] : "";
     });
 
     const content = fs.readFileSync(docxFilePath, "binary");
@@ -115,6 +165,10 @@ const generateDocuments = async (
     );
     fs.writeFileSync(outputFilePath, buf);
     generatedFiles.push(outputFilePath);
+  }
+
+  if (generatedFiles.length === 0) {
+    throw new Error("No documents were generated. The filter conditions may have excluded all rows.");
   }
 
   return generatedFiles;
@@ -336,13 +390,35 @@ app.post(
     try {
       // Read Excel data
       const excelData = readExcelData(path.join(__dirname, excelFile.path));
+      
+      // Parse mergingCondition from the request body
+      let mergingCondition = null;
+      try {
+        if (req.body.mergingCondition) {
+          // If mergingCondition is sent as a string (which happens with multipart/form-data), parse it
+          const parsedCondition = typeof req.body.mergingCondition === 'string' 
+            ? JSON.parse(req.body.mergingCondition)
+            : req.body.mergingCondition;
+            
+          mergingCondition = {
+            column: parsedCondition.column,
+            operator: parsedCondition.operator,
+            value: parsedCondition.value
+          };
+        }
+      } catch (error) {
+        console.error('Error parsing mergingCondition:', error);
+        mergingCondition = null;
+      }
 
-      // Generate individual documents
+      console.log('Parsed mergingCondition:', mergingCondition);
+
       const generatedFiles = await generateDocuments(
         docxFilePath,
         excelData,
         req.body.filterType,
-        { from: req.body.customFrom, to: req.body.customTo }
+        { from: req.body.customFrom, to: req.body.customTo },
+        mergingCondition
       );
       const outputExtension = req.body.outputExtension || "docx";
       const encryptedPassword = req.body.password;
