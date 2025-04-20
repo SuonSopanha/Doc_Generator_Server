@@ -380,16 +380,33 @@ app.post(
   ]),
   async (req, res) => {
     if (!req.files || !req.files["docFile"] || !req.files["excelFile"]) {
-      return res.status(400).send("Both DOC and Excel files are required.");
+      return res.status(400).send("Both template document and data file (Excel/CSV/JSON) are required.");
     }
 
     const docFile = req.files["docFile"][0];
-    const excelFile = req.files["excelFile"][0];
+    const dataFile = req.files["excelFile"][0];
     const docxFilePath = path.join(__dirname, docFile.path);
+    const dataFilePath = path.join(__dirname, dataFile.path);
 
     try {
-      // Read Excel data
-      const excelData = readExcelData(path.join(__dirname, excelFile.path));
+      // Determine file type and read data accordingly
+      let data;
+      const fileExtension = path.extname(dataFile.originalname).toLowerCase();
+      
+      switch (fileExtension) {
+        case '.xlsx':
+        case '.xls':
+          data = readExcelData(dataFilePath);
+          break;
+        case '.csv':
+          data = readCsvData(dataFilePath);
+          break;
+        case '.json':
+          data = readJsonData(dataFilePath);
+          break;
+        default:
+          throw new Error('Unsupported file format. Please use Excel (.xlsx/.xls), CSV (.csv), or JSON (.json) files.');
+      }
       
       // Parse mergingCondition from the request body
       let mergingCondition = null;
@@ -415,7 +432,7 @@ app.post(
 
       const generatedFiles = await generateDocuments(
         docxFilePath,
-        excelData,
+        data,
         req.body.filterType,
         { from: req.body.customFrom, to: req.body.customTo },
         mergingCondition
@@ -443,7 +460,7 @@ app.post(
       // Clean up uploaded files
       try {
         fs.unlinkSync(docxFilePath);
-        fs.unlinkSync(path.join(__dirname, excelFile.path));
+        fs.unlinkSync(dataFilePath);
       } catch (error) {
         console.error("Error cleaning up uploaded files:", error);
       }
