@@ -1,9 +1,32 @@
-const express = require("express");
+const express = require('express');
+const fs = require('fs').promises;
+const path = require('path');
+
+// Delete all files in uploads folder on server start
+(async () => {
+  const uploadsDir = path.join(__dirname, 'uploads');
+  try {
+    const files = await fs.readdir(uploadsDir);
+    for (const file of files) {
+      const filePath = path.join(uploadsDir, file);
+      const stat = await fs.lstat(filePath);
+      if (stat.isFile()) {
+        await fs.unlink(filePath);
+      }
+    }
+    console.log('Uploads folder cleared.');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      // uploads folder does not exist, ignore
+    } else {
+      console.error('Error clearing uploads folder:', err);
+    }
+  }
+})();
+
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 const xlsx = require("xlsx");
 const PizZip = require("pizzip");
 const Docxtemplater = require("docxtemplater");
@@ -17,7 +40,19 @@ const { Column } = require("docx");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
+// Configure CORS with specific options
+app.use(cors({
+  origin: true, // Allow all origins
+  methods: ['GET', 'POST', 'OPTIONS'], // Allow these methods
+  allowedHeaders: ['Content-Type', 'Authorization'], // Allow these headers
+  credentials: true, // Allow credentials
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}));
+
+// Handle preflight requests
+app.options('*', cors());
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
@@ -51,8 +86,24 @@ const readCsvData = (filePath) => {
 };
 
 const readJsonData = (filePath) => {
+  console.log(filePath);
   const fileContent = fs.readFileSync(filePath, "utf8");
-  return JSON.parse(fileContent);
+  const jsonData = JSON.parse(fileContent);
+  console.log(jsonData);
+
+  // Ensure jsonData is an array
+  if (!Array.isArray(jsonData)) {
+    throw new Error('JSON data must be an array of objects');
+  }
+
+  // Get headers from the first object
+  const headers = Object.keys(jsonData[0]);
+
+  // Convert each object to an array of values in the same order as headers
+  const rows = jsonData.map(obj => headers.map(header => obj[header] || ""));
+
+  // Return in same format as Excel/CSV: [headers, ...rows]
+  return [headers, ...rows];
 };
 
 const filterData = (data, startRow, endRow, option) => {
@@ -133,6 +184,8 @@ const generateDocuments = async (
     endRow = Math.min(filteredData.length, (parseInt(range.to) + 1) || filteredData.length);
     increment = 1;
   }
+
+  console.log('Filtered data:', filteredData);
 
   for (let i = startRow; i < endRow; i += increment) {
     const rowData = filteredData[i];
