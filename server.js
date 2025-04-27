@@ -1,17 +1,18 @@
 const express = require('express');
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 
 // Delete all files in uploads folder on server start
 (async () => {
   const uploadsDir = path.join(__dirname, 'uploads');
   try {
-    const files = await fs.readdir(uploadsDir);
+    const files = await fsPromises.readdir(uploadsDir);
     for (const file of files) {
       const filePath = path.join(uploadsDir, file);
-      const stat = await fs.lstat(filePath);
+      const stat = await fsPromises.lstat(filePath);
       if (stat.isFile()) {
-        await fs.unlink(filePath);
+        await fsPromises.unlink(filePath);
       }
     }
     console.log('Uploads folder cleared.');
