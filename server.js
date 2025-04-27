@@ -33,9 +33,7 @@ const Docxtemplater = require("docxtemplater");
 const DocxMerger = require("docx-merger");
 const archiver = require("archiver");
 archiver.registerFormat("zip-encrypted", require("archiver-zip-encrypted"));
-const docxToPdf = require("docx-pdf"); // Import docx-pdf
 const libre = require("libreoffice-convert");
-const { Column } = require("docx");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
