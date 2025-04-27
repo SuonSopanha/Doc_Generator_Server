@@ -517,7 +517,7 @@ app.post(
       }
     } catch (error) {
       console.error("Error processing documents:", error);
-      res.status(500).send("Error processing documents.");
+      res.status(500).send("Error processing documents. error: " + error.message);
     }
   }
 );
