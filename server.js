@@ -425,7 +425,7 @@ const handleMultipleFileOutput = async (
 
 // Main route to handle document processing
 app.post(
-  "/upload",
+  "/api/upload",
   upload.fields([
     { name: "docFile", maxCount: 1 },
     { name: "excelFile", maxCount: 1 },
