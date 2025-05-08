@@ -524,7 +524,7 @@ app.post(
 );
 
 // Basic route
-app.get("/hello", (req, res) => {
+app.get("/api/hello", (req, res) => {
   res.send("Hello, World!");
 });
 
