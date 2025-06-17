@@ -170,9 +170,9 @@ const handleSingleFileOutput = async (generatedIndividualFiles, outputExtension,
 
           const zipFilePath = path.join(__dirname, `uploads/package-single-${Date.now()}.zip`);
           const output = fs.createWriteStream(zipFilePath);
-          const archive = encryptedPassword
-            ? archiver('zip-encrypted', { zlib: { level: 9 }, encryptionMethod: 'aes256', password: encryptedPassword })
-            : archiver('zip', { zlib: { level: 9 } });
+          const archive = !encryptedPassword || encryptedPassword === 'null'
+            ? archiver('zip', { zlib: { level: 9 } })
+            : archiver('zip-encrypted', { zlib: { level: 9 }, encryptionMethod: 'aes256', password: encryptedPassword });
 
           output.on('close', async () => {
             console.log(`Single file ZIP created: ${zipFilePath}`);
@@ -220,7 +220,7 @@ const handleMultipleFileOutput = async (generatedIndividualFiles, outputExtensio
 
       const zipFilePath = path.join(__dirname, `uploads/package-multi-${Date.now()}.zip`);
       const output = fs.createWriteStream(zipFilePath);
-      const archive = encryptedPassword ? archiver('zip-encrypted', { zlib: { level: 9 }, encryptionMethod: 'aes256', password: encryptedPassword }) : archiver('zip', { zlib: { level: 9 } }); // Add encryption if needed for multi-file zip
+      const archive = !encryptedPassword || encryptedPassword === 'null' ? archiver('zip', { zlib: { level: 9 } }) : archiver('zip-encrypted', { zlib: { level: 9 }, encryptionMethod: 'aes256', password: encryptedPassword }); // Add encryption if needed for multi-file zip
 
       output.on('close', async () => {
         console.log(`Multiple file ZIP created: ${zipFilePath}`);

@@ -5,6 +5,7 @@ const path = require('path');
 const { generateAndPackageDocuments } = require('./doc-generator'); // Correct function name
 
 const QUEUE_NAME = 'documentGeneration';
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 // Ensure you have REDIS_HOST and REDIS_PORT environment variables set up if not using defaults
 const redisConnectionOptions = {
@@ -56,7 +57,9 @@ const worker = new Worker(QUEUE_NAME, async job => {
     // DO NOT delete finalPackagePath here, as it's the result of the job.
     // Its lifecycle management is external to the worker's direct processing scope.
   }
-  return { jobId: job.id, finalPackagePath }; // Return some result for the job completion
+  // Convert absolute path to relative path within uploads directory
+  const relativePath = path.relative(UPLOADS_DIR, finalPackagePath);
+  return { jobId: job.id, finalPackagePath: relativePath }; // Return relative path for the job completion
 
 }, { connection: new IORedis(redisConnectionOptions), concurrency: process.env.WORKER_CONCURRENCY || 3 }); // Adjust concurrency as needed
 

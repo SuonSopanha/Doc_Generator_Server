@@ -10,6 +10,7 @@ const { v4: uuidv4 } = require('uuid'); // For generating unique job IDs
 
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 const QUEUE_NAME = 'documentGeneration';
+const FILE_CLEANUP_INTERVAL = parseInt(process.env.FILE_CLEANUP_INTERVAL || 3) * 60 * 1000; // Default to 3 minutes if not set
 
 // Ensure you have REDIS_HOST and REDIS_PORT environment variables set up if not using defaults
 const redisConnectionOptions = {
@@ -39,6 +40,37 @@ const documentQueue = new Queue(QUEUE_NAME, { connection: new IORedis(redisConne
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Function to clean up old files
+async function cleanupOldFiles() {
+  try {
+    const files = await fsPromises.readdir(UPLOADS_DIR);
+    const now = Date.now();
+    
+    for (const file of files) {
+      const filePath = path.join(UPLOADS_DIR, file);
+      const stats = await fsPromises.stat(filePath);
+      const age = now - stats.mtimeMs;
+      
+      if (age > FILE_CLEANUP_INTERVAL) {
+        try {
+          await fsPromises.unlink(filePath);
+          console.log(`[Cleanup] Deleted old file: ${file}`);
+        } catch (error) {
+          console.error(`[Cleanup] Error deleting file ${file}:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[Cleanup] Error during file cleanup:', error);
+  }
+}
+
+// Start cleanup interval
+setInterval(cleanupOldFiles, FILE_CLEANUP_INTERVAL);
+
+// Initial cleanup on server start
+cleanupOldFiles();
+
 app.use(cors({
   origin: true, 
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -64,6 +96,26 @@ const storage = multer.diskStorage({
   },
 });
 const upload = multer({ storage: storage });
+
+// File download endpoint
+app.get("/api/download/:fileId", async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, 'uploads', req.params.fileId);
+    if (await fsPromises.access(filePath).then(() => true).catch(() => false)) {
+      res.download(filePath, path.basename(filePath), (err) => {
+        if (err) {
+          console.error('Error downloading file:', err);
+        }
+        // Delete file after download
+      });
+    } else {
+      res.status(404).json({ error: 'File not found' });
+    }
+  } catch (error) {
+    console.error('Error handling download:', error);
+    res.status(500).json({ error: 'Error handling download' });
+  }
+});
 
 app.post('/api/upload', upload.fields([{ name: 'docFile', maxCount: 1 }, { name: 'excelFile', maxCount: 1 }]), async (req, res) => {
   if (!req.files || !req.files['docFile'] || !req.files['excelFile']) {
