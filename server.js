@@ -154,11 +154,13 @@ app.post('/api/upload', upload.fields([{ name: 'docFile', maxCount: 1 }, { name:
     console.log('[Server] Queue add result:', result);
     console.log(`[Server] Job ${jobId} added to queue with data:`, JSON.stringify(jobData, null, 2));
     
-    res.status(200).json({ 
-      message: 'Document generation request accepted. Processing in background.', 
-      jobId: jobId,
-      status: 'accepted'
-    });
+    res.header('Content-Type', 'application/json')
+      .status(200)
+      .json({ 
+        message: 'Document generation request accepted. Processing in background.', 
+        jobId: jobId,
+        status: 'accepted'
+      });
   } catch (error) {
     console.error('[Server] Error adding job to queue:', {
       error,
@@ -174,13 +176,14 @@ app.post('/api/upload', upload.fields([{ name: 'docFile', maxCount: 1 }, { name:
       console.error('[Server] Error during cleanup:', cleanupError);
     }
     
-    res.status(500).json({ 
-      error: 'Error submitting document generation request',
-      details: error.message,
-      jobId: jobId
-    });
+    res.header('Content-Type', 'application/json')
+      .status(500)
+      .json({ 
+        error: 'Error submitting document generation request',
+        details: error.message,
+        jobId: jobId
+      });
     await fsPromises.unlink(dataFile.path).catch(e => console.error(`Cleanup error for ${dataFile.path}: ${e}`));
-    res.status(500).send('Error submitting document generation request.');
   }
 });
 
