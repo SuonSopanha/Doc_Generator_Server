@@ -29,21 +29,9 @@ const worker = new Worker(QUEUE_NAME, async job => {
     finalPackagePath = await generateAndPackageDocuments(job.data);
     console.log(`[Worker] Job ${job.id} processed successfully. Final package at: ${finalPackagePath}`);
     
-    // IMPORTANT: The finalPackagePath (ZIP file) is now created.
-    // You need to decide what to do with it. For example:
-    // 1. Store its path in a database associated with job.id.
-    // 2. Notify the user (e.g., via WebSockets, email) that their file is ready with a download link.
-    // 3. Move it to a more permanent storage if 'uploads' is temporary.
-    // For now, it remains in the 'uploads' directory. If it's cleaned up too soon, users can't download it.
-    // The current doc-generator.js cleans up intermediate files, but not the final zip it returns.
-
-    // Let's assume for now the file path is enough and it will be handled by another part of your system.
-    // If the file needs to be kept, ensure no other process cleans it up prematurely.
 
   } catch (error) {
     console.error(`[Worker] Error processing job ${job.id}:`, error.message, error.stack);
-    // If generateAndPackageDocuments throws, it should have tried to clean its own intermediates.
-    // The finalPackagePath might not be set or valid if an error occurred.
     throw error; // This will mark the job as failed in BullMQ
   } finally {
     // Cleanup the original uploaded files (template and data file) that were processed by this job.
@@ -54,8 +42,6 @@ const worker = new Worker(QUEUE_NAME, async job => {
     if (dataFilePath) {
       await fsPromises.unlink(dataFilePath).catch(e => console.error(`[Worker] Error deleting original data file ${dataFilePath} for job ${job.id}: ${e.message}`));
     }
-    // DO NOT delete finalPackagePath here, as it's the result of the job.
-    // Its lifecycle management is external to the worker's direct processing scope.
   }
   // Convert absolute path to relative path within uploads directory
   const relativePath = path.relative(UPLOADS_DIR, finalPackagePath);
