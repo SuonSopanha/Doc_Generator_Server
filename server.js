@@ -144,7 +144,7 @@ app.post('/api/upload', upload.fields([{ name: 'docFile', maxCount: 1 }, { name:
   try {
     await documentQueue.add('generateDocument', jobData, { jobId: jobId }); // Use custom job ID
     console.log(`[Server] Job ${jobId} added to queue with data:`, JSON.stringify(jobData, null, 2));
-    res.status(202).json({ 
+    res.status(200).json({ 
       message: 'Document generation request accepted. Processing in background.', 
       jobId: jobId 
       // You might want to add a URL here for the client to poll job status
